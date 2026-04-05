@@ -62,7 +62,14 @@ async def scrape_threads(keyword: str, status_callback) -> list[dict]:
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"]
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--disable-infobars",
+                "--window-size=1280,800",
+            ]
         )
         context = await browser.new_context(
             user_agent=(
@@ -71,8 +78,26 @@ async def scrape_threads(keyword: str, status_callback) -> list[dict]:
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
             locale="zh-TW",
-            viewport={"width": 1280, "height": 800}
+            viewport={"width": 1280, "height": 800},
+            extra_http_headers={
+                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+            }
         )
+        # 隱藏 webdriver 特徵
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-TW', 'zh', 'en-US'] });
+            window.chrome = { runtime: {} };
+        """)
         page = await context.new_page()
 
         # 1. 直接帶參數前往搜尋結果頁
