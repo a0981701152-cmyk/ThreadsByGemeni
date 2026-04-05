@@ -81,7 +81,16 @@ async def scrape_threads(keyword: str, status_callback) -> list[dict]:
         search_url = f"https://www.threads.com/search?q={encoded}&serp_type=default&hl=zh-tw"
         logger.info(f"Navigating to: {search_url}")
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_timeout(5000)
+        await page.wait_for_timeout(8000)  # 等 React 完整渲染
+
+        # 等貼文連結出現，最多等 15 秒
+        try:
+            await page.wait_for_function(
+                "() => document.querySelectorAll('a[href*=\"/post/\"]').length > 0",
+                timeout=15000
+            )
+        except:
+            pass  # 等不到就繼續，後面再判斷
 
         # 2. 等第一批結果出現再開始滾動
         await status_callback("📜 載入搜尋結果中...")
