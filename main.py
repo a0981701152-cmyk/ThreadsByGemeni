@@ -17,7 +17,7 @@ ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))  # 0 = 不限制
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+    gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 else:
     gemini_model = None
 
@@ -83,18 +83,28 @@ async def scrape_threads(keyword: str, status_callback) -> list[dict]:
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_timeout(5000)
 
-        # 2. 滾動載入更多結果
+        # 2. 等第一批結果出現再開始滾動
         await status_callback("📜 載入搜尋結果中...")
+        try:
+            await page.wait_for_selector('a[href*="/post/"]', timeout=10000)
+        except:
+            pass
+
         prev_count = 0
-        for _ in range(15):
+        no_change_streak = 0
+        for _ in range(30):  # 最多滾 30 次
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(2500)
+            await page.wait_for_timeout(3000)
             count = await page.evaluate(
                 "() => document.querySelectorAll('a[href*=\"/post/\"]').length"
             )
             logger.info(f"Post links found so far: {count}")
-            if count == prev_count and prev_count > 0:
-                break
+            if count == prev_count:
+                no_change_streak += 1
+                if no_change_streak >= 3:  # 連續 3 次沒變才停
+                    break
+            else:
+                no_change_streak = 0
             prev_count = count
 
         # 3. 收集貼文連結
