@@ -37,11 +37,12 @@ async def gemini_analysis(all_posts: list[dict], keyword: str) -> str:
     full_text = "\n\n".join(sections)
     prompt = (
         f"以下是 Threads 上搜尋「{keyword}」的貼文與留言內容。\n"
-        f"請用繁體中文完成以下分析：\n"
-        f"1. 整體評價傾向（正面／負面／褒貶不一）\n"
-        f"2. 大家主要推薦或批評的具體原因（列點）\n"
-        f"3. 值得注意的資訊或常見問題（列點）\n"
-        f"4. 一句話總結：是否值得推薦？\n\n"
+        f"請用繁體中文整理社群上大家對這個話題的看法，格式如下：\n\n"
+        f"📌 話題概況\n（簡短說明這批貼文主要在討論什麼面向）\n\n"
+        f"💬 社群上常見的討論方向\n（條列整理大家實際提到的內容、經驗、觀點，"
+        f"忠實呈現社群的聲音，可以直接引用有代表性的留言）\n\n"
+        f"🔍 值得注意的細節或分歧點\n（如果有人說法不一、或提到特定條件差異，列出來）\n\n"
+        f"注意：不要做推薦或不推薦的結論，只要客觀整理社群討論內容。\n\n"
         f"{full_text}"
     )
 
@@ -101,6 +102,18 @@ async def scrape_threads(keyword: str, status_callback) -> list[dict]:
                 post_urls.append(full_url)
 
         await status_callback(f"✅ 找到 {len(post_urls)} 篇貼文，開始逐篇爬取...")
+
+        # 如果完全找不到連結，截圖 debug
+        if not post_urls:
+            screenshot = await page.screenshot(full_page=False)
+            page_title = await page.title()
+            current_url = page.url
+            logger.error(f"No post URLs found. Title: {page_title}, URL: {current_url}")
+            # 把頁面 HTML 前 2000 字存 log
+            html = await page.content()
+            logger.error(f"Page HTML (first 2000): {html[:2000]}")
+            await browser.close()
+            return []
 
         # 逐篇爬取
         for i, url in enumerate(post_urls, 1):
@@ -231,7 +244,14 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         posts = await scrape_threads(keyword, update_status)
 
         if not posts:
-            await status_msg.edit_text("❌ 搜尋失敗或找不到結果，Threads 可能有反爬蟲限制，請稍後再試。")
+            await status_msg.edit_text(
+                "❌ 找不到貼文或爬取失敗。\n\n"
+                "可能原因：\n"
+                "• Threads 要求登入才能搜尋\n"
+                "• 反爬蟲攔截\n"
+                "• 搜尋頁面結構改版\n\n"
+                "請到 Railway → Logs 查看詳細錯誤訊息。"
+            )
             return
 
         total_comments = sum(len(p["comments"]) for p in posts)
