@@ -156,50 +156,44 @@ async def scrape_threads(keyword: str, status_callback) -> list[dict]:
             pass
 
         await status_callback("📜 載入搜尋結果中...")
-        prev_count = 0
+        collected_urls = set()
         no_change_streak = 0
+        prev_total = 0
 
         for scroll_round in range(50):
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(3500)  # 等內容載入
+            # 每次滾動前先收集當前可見的連結
+            hrefs = await page.evaluate("""
+                () => Array.from(document.querySelectorAll('a'))
+                    .map(a => a.getAttribute('href'))
+                    .filter(h => h && h.includes('/post/'))
+            """)
+            for href in hrefs:
+                if href.startswith("/"):
+                    collected_urls.add(f"https://www.threads.com{href}")
+                elif href.startswith("http"):
+                    collected_urls.add(href)
 
-            count = await page.evaluate(
-                "() => document.querySelectorAll('a[href*=\"/post/\"]').length"
-            )
-            logger.info(f"Scroll {scroll_round+1}: {count} posts found")
+            total = len(collected_urls)
+            logger.info(f"Scroll {scroll_round+1}: visible={len(hrefs)}, collected={total}")
 
-            if count >= 50:
+            if total >= 50:
                 break
 
-            if count == prev_count:
+            if total == prev_total:
                 no_change_streak += 1
-                if count >= 20 and no_change_streak >= 2:
+                if total >= 20 and no_change_streak >= 3:
                     break
-                if no_change_streak >= 5:
+                if no_change_streak >= 6:
                     break
             else:
                 no_change_streak = 0
-            prev_count = count
+            prev_total = total
 
-        await status_callback(f"📊 共找到 {prev_count} 篇貼文，整理中...")
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await page.wait_for_timeout(3500)
 
-        all_hrefs = await page.evaluate("""
-            () => Array.from(document.querySelectorAll('a'))
-                .map(a => a.getAttribute('href'))
-                .filter(h => h && h.includes('/post/'))
-        """)
-
-        post_urls = []
-        seen = set()
-        for href in all_hrefs:
-            if len(post_urls) >= 50:
-                break
-            if href not in seen:
-                seen.add(href)
-                if href.startswith("/"):
-                    post_urls.append(f"https://www.threads.com{href}")
-                elif href.startswith("http"):
-                    post_urls.append(href)
+        post_urls = list(collected_urls)[:50]
+        await status_callback(f"📊 共收集 {len(post_urls)} 篇貼文，開始逐篇爬取...")
 
         logger.info(f"Total unique post URLs: {len(post_urls)}")
 
