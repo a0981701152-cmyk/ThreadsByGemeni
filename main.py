@@ -385,11 +385,17 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)
             ]
         },
-        fallbacks=[CommandHandler("done", done_command)],
+        fallbacks=[
+            CommandHandler("done", done_command),
+            CommandHandler("start", start_command),
+            CommandHandler("search", search_command),
+        ],
+        allow_reentry=True,
     )
 
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(conv)
+    app.add_handler(CommandHandler("start", start_command), group=0)
+    app.add_handler(CommandHandler("done", done_command), group=0)
+    app.add_handler(conv, group=1)
     logger.info("Bot started")
     app.run_polling()
 
