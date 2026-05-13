@@ -8,7 +8,7 @@ import google.generativeai as genai
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    ContextTypes, ConversationHandler, filters
+    ContextTypes, filters
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -25,8 +25,6 @@ if GEMINI_API_KEY:
     gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 else:
     gemini_model = None
-
-WAITING_QUESTION = 1
 
 
 # ── Cookie 解析 ───────────────────────────────────────
@@ -284,27 +282,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Threads 社群討論整理 Bot\n\n"
         "用法：\n"
-        "/search 關鍵字 — 搜尋並爬取貼文\n"
+        "直接輸入關鍵字 — 搜尋並爬取貼文\n"
         "爬完後直接輸入問題，Gemini 會根據內容回答\n"
         "/done — 結束問答、清除資料\n\n"
         "例如：\n"
-        "/search 好市多牛肉捲\n"
+        "好市多牛肉捲\n"
         "→ 大家覺得好吃嗎？\n"
         "→ 有人提到價格嗎？"
     )
 
 
-async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
-        await update.message.reply_text("⛔ 無權限使用此 bot")
-        return
-
-    if not context.args:
-        await update.message.reply_text("用法：/search 關鍵字\n例如：/search 好市多牛肉捲")
-        return
-
-    keyword = " ".join(context.args)
+async def do_search(update: Update, context: ContextTypes.DEFAULT_TYPE, keyword: str):
     status_msg = await update.message.reply_text(f"🔍 開始搜尋「{keyword}」，請稍候...")
 
     async def update_status(text: str):
@@ -338,58 +326,48 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💬 請輸入你想問的問題，Gemini 會根據這些內容回答。\n"
             f"輸入 /done 結束問答。"
         )
-        return WAITING_QUESTION
-
     except Exception as e:
-        logger.error(f"search_command error: {e}")
+        logger.error(f"search error: {e}")
         await status_msg.edit_text(f"❌ 發生錯誤：{str(e)[:200]}")
 
 
-async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    question = update.message.text.strip()
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
+        await update.message.reply_text("⛔ 無權限使用此 bot")
+        return
+
+    text = update.message.text.strip()
+    if not text:
+        return
+
     posts = context.user_data.get("posts", [])
-    keyword = context.user_data.get("keyword", "")
 
     if not posts:
-        await update.message.reply_text("❌ 沒有資料，請先用 /search 搜尋")
-        return ConversationHandler.END
+        await do_search(update, context, text)
+        return
 
+    keyword = context.user_data.get("keyword", "")
     status_msg = await update.message.reply_text("🤖 Gemini 思考中...")
-    answer = await gemini_ask(posts, keyword, question)
+    answer = await gemini_ask(posts, keyword, text)
     await status_msg.delete()
     await update.message.reply_text(answer)
-    await update.message.reply_text("💬 還有其他問題嗎？繼續輸入，或 /done 結束。")
-    return WAITING_QUESTION
+    await update.message.reply_text("💬 還有其他問題嗎？繼續輸入，或 /done 結束、或輸入新關鍵字重新搜尋。")
 
 
 async def done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("✅ 問答結束，資料已清除。")
-    return ConversationHandler.END
+    await update.message.reply_text("✅ 問答結束，資料已清除。輸入新關鍵字可重新搜尋。")
 
 
 # ── 主程式 ────────────────────────────────────────────
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("search", search_command)],
-        states={
-            WAITING_QUESTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)
-            ]
-        },
-        fallbacks=[
-            CommandHandler("done", done_command),
-            CommandHandler("start", start_command),
-            CommandHandler("search", search_command),
-        ],
-        allow_reentry=True,
-    )
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("done", done_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    app.add_handler(CommandHandler("start", start_command), group=0)
-    app.add_handler(CommandHandler("done", done_command), group=0)
-    app.add_handler(conv, group=1)
     logger.info("Bot started")
     app.run_polling()
 
